@@ -17,14 +17,16 @@ final class FakeTransport implements Transport
     public int $status;
     public ?\Throwable $throw = null;
     public array $calls = [];
+    public ?string $responseBody = null;
 
     public function __construct(int $status = 200)
     {
         $this->status = $status;
     }
 
-    public function post(string $url, array $headers, string $body, float $timeoutSeconds): int
+    public function post(string $url, array $headers, string $body, float $timeoutSeconds, ?string &$responseBody = null): int
     {
+        $responseBody = $this->responseBody;
         if ($this->throw !== null) {
             throw $this->throw;
         }
@@ -93,12 +95,62 @@ final class ClientTest extends TestCase
 
     public function testFlushKeepsEventsOnNetworkError(): void
     {
+        $errors = [];
         $outbox = new FileOutbox($this->dir);
-        $client = new Client($this->config(), $outbox, new FakeTransport(0));
+        $client = new Client($this->config(), $outbox, new FakeTransport(0), function (\Throwable $e) use (&$errors) {
+            $errors[] = $e->getMessage();
+        });
         $client->track(Event::create('x'));
 
         $this->assertSame(0, $client->flush());
         $this->assertCount(1, $outbox->peek(10));
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('network error', $errors[0]);
+    }
+
+    public function testNon2xxIsReported(): void
+    {
+        $errors = [];
+        $outbox = new FileOutbox($this->dir);
+        $client = new Client($this->config(), $outbox, new FakeTransport(503), function (\Throwable $e) use (&$errors) {
+            $errors[] = $e;
+        });
+        $client->track(Event::create('x'));
+
+        $this->assertSame(0, $client->flush());
+        $this->assertCount(1, $errors);
+        $this->assertInstanceOf(\RuntimeException::class, $errors[0]);
+        $this->assertSame('Collector answered HTTP 503', $errors[0]->getMessage());
+    }
+
+    public function testRejectedEventsInA200AreReported(): void
+    {
+        $errors = [];
+        $transport = new FakeTransport(200);
+        $transport->responseBody = '{"accepted":1,"rejected":2}';
+        $outbox = new FileOutbox($this->dir);
+        $client = new Client($this->config(), $outbox, $transport, function (\Throwable $e) use (&$errors) {
+            $errors[] = $e->getMessage();
+        });
+        $client->track(Event::create('x'));
+
+        $this->assertSame(1, $client->flush());
+        $this->assertSame(['Collector rejected 2 event(s)'], $errors);
+        $this->assertCount(0, $outbox->peek(10));
+    }
+
+    public function testCleanSuccessReportsNothing(): void
+    {
+        $errors = [];
+        $transport = new FakeTransport(200);
+        $transport->responseBody = '{"accepted":1,"rejected":0}';
+        $client = new Client($this->config(), new FileOutbox($this->dir), $transport, function (\Throwable $e) use (&$errors) {
+            $errors[] = $e->getMessage();
+        });
+        $client->track(Event::create('x'));
+
+        $this->assertSame(1, $client->flush());
+        $this->assertSame([], $errors);
     }
 
     public function testFlushKeepsEventsOn401(): void

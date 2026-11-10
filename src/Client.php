@@ -96,15 +96,32 @@ final class Client
             'X-CI-Timestamp: ' . $timestamp,
             'X-CI-Signature: ' . Signer::sign($this->config->secret(), $timestamp, $body),
         ];
-        $status = $this->transport->post($this->config->endpoint() . '/v1/s', $headers, $body, $this->config->timeoutSeconds());
+        $responseBody = null;
+        $status = $this->transport->post($this->config->endpoint() . '/v1/s', $headers, $body, $this->config->timeoutSeconds(), $responseBody);
+        if ($status === 0) {
+            $this->report(new \RuntimeException('Collector request failed with a network error'));
+
+            return 0;
+        }
         if ($status < 200 || $status > 299) {
+            $this->report(new \RuntimeException('Collector answered HTTP ' . $status));
+
             return 0;
         }
 
         $ids = array_map('strval', array_keys($encoded));
         $this->outbox->remove($ids);
+        $this->reportRejected($responseBody);
 
         return count($ids);
+    }
+
+    private function reportRejected(?string $responseBody): void
+    {
+        $decoded = $responseBody === null ? null : json_decode($responseBody, true);
+        if (is_array($decoded) && isset($decoded['rejected']) && is_int($decoded['rejected']) && $decoded['rejected'] > 0) {
+            $this->report(new \RuntimeException('Collector rejected ' . $decoded['rejected'] . ' event(s)'));
+        }
     }
 
     private function normalise(array $payload): array
