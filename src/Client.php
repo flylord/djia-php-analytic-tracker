@@ -12,12 +12,16 @@ final class Client
     private Config $config;
     private Outbox $outbox;
     private Transport $transport;
+    private $onError;
+    private ?string $lockPath;
 
-    public function __construct(Config $config, Outbox $outbox, ?Transport $transport = null)
+    public function __construct(Config $config, Outbox $outbox, ?Transport $transport = null, ?callable $onError = null, ?string $lockPath = null)
     {
         $this->config = $config;
         $this->outbox = $outbox;
         $this->transport = $transport ?? new CurlTransport();
+        $this->onError = $onError;
+        $this->lockPath = $lockPath;
     }
 
     public function track(Event $event): void
@@ -25,7 +29,7 @@ final class Client
         try {
             $this->outbox->push($event->id(), $event->toArray());
         } catch (\Throwable $e) {
-            return;
+            $this->report($e);
         }
     }
 
@@ -33,14 +37,18 @@ final class Client
     {
         $lock = null;
         try {
-            $path = sys_get_temp_dir() . '/ci-sdk-' . md5($this->config->endpoint() . $this->config->keyId()) . '.lock';
+            $path = $this->lockPath ?? sys_get_temp_dir() . '/ci-sdk-' . md5($this->config->endpoint() . $this->config->keyId()) . '.lock';
             $lock = @fopen($path, 'c');
-            if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+            if ($lock === false) {
+                $this->report(new \RuntimeException('Flush lock file could not be opened, continuing unlocked'));
+            } elseif (!flock($lock, LOCK_EX | LOCK_NB)) {
                 return 0;
             }
 
             return $this->send($max);
         } catch (\Throwable $e) {
+            $this->report($e);
+
             return 0;
         } finally {
             if (is_resource($lock)) {
@@ -73,6 +81,7 @@ final class Client
         }
 
         if ($unsendable !== []) {
+            $this->report(new \RuntimeException('Dropped ' . count($unsendable) . ' unsendable event(s): ' . implode(',', $unsendable)));
             $this->outbox->remove($unsendable);
         }
         if ($encoded === []) {
@@ -105,5 +114,17 @@ final class Client
         }
 
         return $payload;
+    }
+
+    private function report(\Throwable $error): void
+    {
+        if ($this->onError === null) {
+            return;
+        }
+        try {
+            ($this->onError)($error);
+        } catch (\Throwable $ignored) {
+            return;
+        }
     }
 }

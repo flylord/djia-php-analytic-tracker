@@ -7,10 +7,12 @@ namespace CommerceIntelligence\Sdk;
 final class FileOutbox implements Outbox
 {
     private string $directory;
+    private $onError;
 
-    public function __construct(string $directory)
+    public function __construct(string $directory, ?callable $onError = null)
     {
         $this->directory = rtrim($directory, '/\\');
+        $this->onError = $onError;
     }
 
     public function push(string $eventId, array $payload): void
@@ -54,6 +56,7 @@ final class FileOutbox implements Outbox
             $payload = $raw === false ? null : json_decode($raw, true);
             if (!is_array($payload)) {
                 if ($raw !== false) {
+                    $this->report(new \RuntimeException('Corrupt outbox file removed: ' . $name));
                     @unlink($file);
                 }
                 continue;
@@ -77,5 +80,17 @@ final class FileOutbox implements Outbox
     private function path(string $eventId): string
     {
         return $this->directory . '/' . basename($eventId) . '.json';
+    }
+
+    private function report(\Throwable $error): void
+    {
+        if ($this->onError === null) {
+            return;
+        }
+        try {
+            ($this->onError)($error);
+        } catch (\Throwable $ignored) {
+            return;
+        }
     }
 }

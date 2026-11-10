@@ -40,4 +40,18 @@ final class FileOutboxTest extends TestCase
         $outbox->remove(['a', 'b']);
         $this->assertSame(['c'], array_keys($outbox->peek(10)));
     }
+
+    public function testCorruptFileIsReportedAndRemoved(): void
+    {
+        mkdir($this->dir);
+        file_put_contents($this->dir . '/bad.json', '{not json');
+        $errors = [];
+        $outbox = new FileOutbox($this->dir, static function (\Throwable $e) use (&$errors): void {
+            $errors[] = $e;
+        });
+
+        $this->assertSame([], $outbox->peek(10));
+        $this->assertCount(1, $errors);
+        $this->assertFileDoesNotExist($this->dir . '/bad.json');
+    }
 }

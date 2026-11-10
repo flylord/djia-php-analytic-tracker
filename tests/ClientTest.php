@@ -114,11 +114,58 @@ final class ClientTest extends TestCase
     public function testTrackNeverThrowsWhenOutboxUnwritable(): void
     {
         $file = tempnam(sys_get_temp_dir(), 'ci-file');
-        $client = new Client($this->config(), new FileOutbox($file), new FakeTransport(200));
+        $errors = [];
+        $client = new Client($this->config(), new FileOutbox($file), new FakeTransport(200), static function (\Throwable $e) use (&$errors): void {
+            $errors[] = $e;
+        });
 
         $client->track(Event::create('x'));
-        $this->assertTrue(true);
         unlink($file);
+        $this->assertCount(1, $errors);
+    }
+
+    public function testOversizedDropIsReported(): void
+    {
+        $errors = [];
+        $client = new Client($this->config(), new FileOutbox($this->dir), new FakeTransport(200), static function (\Throwable $e) use (&$errors): void {
+            $errors[] = $e;
+        });
+        $client->track(Event::create('huge', ['blob' => str_repeat('a', 1100000)]));
+
+        $client->flush();
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('unsendable', $errors[0]->getMessage());
+    }
+
+    public function testThrowingHookDoesNotEscape(): void
+    {
+        $hook = static function (\Throwable $e): void {
+            throw new \LogicException('hook');
+        };
+        $file = tempnam(sys_get_temp_dir(), 'ci-file');
+        $client = new Client($this->config(), new FileOutbox($file), new FakeTransport(200), $hook);
+        $client->track(Event::create('x'));
+        unlink($file);
+
+        $transport = new FakeTransport(200);
+        $transport->throw = new \RuntimeException('boom');
+        $client = new Client($this->config(), new FileOutbox($this->dir), $transport, $hook);
+        $client->track(Event::create('x'));
+        $this->assertSame(0, $client->flush());
+    }
+
+    public function testFlushProceedsWhenLockCannotBeOpened(): void
+    {
+        $outbox = new FileOutbox($this->dir);
+        $transport = new FakeTransport(200);
+        $errors = [];
+        $client = new Client($this->config(), $outbox, $transport, static function (\Throwable $e) use (&$errors): void {
+            $errors[] = $e;
+        }, '/nonexistent-dir-ci/x.lock');
+        $client->track(Event::create('x'));
+
+        $this->assertSame(1, $client->flush());
+        $this->assertCount(1, $errors);
     }
 
     public function testFlushNeverThrows(): void
