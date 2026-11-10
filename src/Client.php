@@ -1,0 +1,109 @@
+<?php
+
+declare(strict_types=1);
+
+namespace CommerceIntelligence\Sdk;
+
+final class Client
+{
+    private const MAX_BODY_BYTES = 1048576;
+    private const ENVELOPE_BYTES = 8;
+
+    private Config $config;
+    private Outbox $outbox;
+    private Transport $transport;
+
+    public function __construct(Config $config, Outbox $outbox, ?Transport $transport = null)
+    {
+        $this->config = $config;
+        $this->outbox = $outbox;
+        $this->transport = $transport ?? new CurlTransport();
+    }
+
+    public function track(Event $event): void
+    {
+        try {
+            $this->outbox->push($event->id(), $event->toArray());
+        } catch (\Throwable $e) {
+            return;
+        }
+    }
+
+    public function flush(int $max = 100): int
+    {
+        $lock = null;
+        try {
+            $path = sys_get_temp_dir() . '/ci-sdk-' . md5($this->config->endpoint() . $this->config->keyId()) . '.lock';
+            $lock = @fopen($path, 'c');
+            if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+                return 0;
+            }
+
+            return $this->send($max);
+        } catch (\Throwable $e) {
+            return 0;
+        } finally {
+            if (is_resource($lock)) {
+                @flock($lock, LOCK_UN);
+                @fclose($lock);
+            }
+        }
+    }
+
+    private function send(int $max): int
+    {
+        $pending = $this->outbox->peek(max(0, min($max, 500)));
+        $encoded = [];
+        $unsendable = [];
+        $size = self::ENVELOPE_BYTES;
+
+        foreach ($pending as $id => $payload) {
+            $json = json_encode($this->normalise($payload));
+            $id = (string) $id;
+            if ($json === false || self::ENVELOPE_BYTES + strlen($json) > self::MAX_BODY_BYTES) {
+                $unsendable[] = $id;
+                continue;
+            }
+            $added = strlen($json) + ($encoded === [] ? 0 : 1);
+            if ($size + $added > self::MAX_BODY_BYTES) {
+                break;
+            }
+            $size += $added;
+            $encoded[$id] = $json;
+        }
+
+        if ($unsendable !== []) {
+            $this->outbox->remove($unsendable);
+        }
+        if ($encoded === []) {
+            return 0;
+        }
+
+        $body = '{"e":[' . implode(',', $encoded) . ']}';
+        $timestamp = (string) time();
+        $headers = [
+            'Content-Type: application/json',
+            'X-CI-Key-Id: ' . $this->config->keyId(),
+            'X-CI-Timestamp: ' . $timestamp,
+            'X-CI-Signature: ' . Signer::sign($this->config->secret(), $timestamp, $body),
+        ];
+        $status = $this->transport->post($this->config->endpoint() . '/v1/s', $headers, $body, $this->config->timeoutSeconds());
+        if ($status < 200 || $status > 299) {
+            return 0;
+        }
+
+        $ids = array_map('strval', array_keys($encoded));
+        $this->outbox->remove($ids);
+
+        return count($ids);
+    }
+
+    private function normalise(array $payload): array
+    {
+        if (array_key_exists('properties', $payload) && $payload['properties'] === []) {
+            $payload['properties'] = new \stdClass();
+        }
+
+        return $payload;
+    }
+}

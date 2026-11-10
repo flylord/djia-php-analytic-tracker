@@ -1,0 +1,26 @@
+{
+    "name": "commerce-intelligence/php-sdk",
+    "description": "PHP integration library for sending signed server events to the Commerce Intelligence collector",
+    "type": "library",
+    "require": {
+        "php": ">=7.4",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "CommerceIntelligence\\Sdk\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CommerceIntelligence\\Sdk\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
