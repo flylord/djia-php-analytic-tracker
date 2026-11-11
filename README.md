@@ -51,7 +51,8 @@ $client->flush();
 
 - `track()` only writes the event to the outbox. It never sends anything and never throws.
 - `flush()` sends the queued events. Call it at the end of the request, after `fastcgi_finish_request()` when available, or from a cron job. Events stay in the outbox until the collector accepts them.
-- `flush()` never throws. Failures go to the `onError` hook (the fourth `Client` argument): network errors, non 2xx answers (`Collector answered HTTP 503`), events the collector rejected inside a 200 answer, dropped unsendable events and outbox problems. The hook is optional, and an exception thrown by it is swallowed.
+- `flush()` never throws. Failures go to the `onError` hook (the fourth `Client` argument): network errors, non 2xx answers (`Collector answered HTTP 503`), events the collector rejected inside a 200
+  answer, dropped unsendable events and outbox problems. The hook is optional, and an exception thrown by it is swallowed.
 - `Visitor::anonymousId($_COOKIE)` returns the value of the `ci_aid` cookie set by the browser tracker, or `null` when it is missing or invalid. Pass it so server events join the browser session.
 - One request carries at most 500 events and 1 MiB of body. `flush($max)` caps the batch at 500, and a batch is cut earlier if it would exceed 1 MiB. Further events go out on the next flush.
 - Concurrent flushes are serialised with a lock file, so a second flush returns 0 while another one runs.
