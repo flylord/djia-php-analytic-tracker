@@ -1,5 +1,5 @@
 {
-  "name": "commerce-intelligence/php-sdk",
+  "name": "djia/php-analytic-tracker",
   "description": "PHP integration library for sending signed server events to the Commerce Intelligence collector",
   "type": "library",
   "require": {

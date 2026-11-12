@@ -12,12 +12,12 @@ The package is not on Packagist. Require it through a Composer path repository i
 		{ "type": "path", "url": "../path/to/app/php-sdk", "options": { "symlink": false } }
 	],
 	"require": {
-		"commerce-intelligence/php-sdk": "@dev"
+		"djia/php-analytic-tracker": "@dev"
 	}
 }
 ```
 
-After changing the SDK, run `composer update commerce-intelligence/php-sdk` in the consuming project so its `composer.lock` and `vendor/` pick up the new code.
+After changing the SDK, run `composer update djia/php-analytic-tracker` in the consuming project so its `composer.lock` and `vendor/` pick up the new code.
 
 ## Usage
 
