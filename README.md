@@ -47,6 +47,45 @@ if (function_exists('fastcgi_finish_request')) {
 $client->flush();
 ```
 
+## Outbox
+
+`track()` stores events in an outbox. Two implementations ship with the SDK.
+
+**Database (`PdoOutbox`)**, for MySQL, PostgreSQL or SQLite through PDO:
+
+```php
+use CommerceIntelligence\Sdk\PdoOutbox;
+
+$pdo = new \PDO('mysql:host=db;dbname=shop;charset=utf8mb4', 'user', 'pass');
+$outbox = new PdoOutbox($pdo, 'ci_outbox', function (\Throwable $error): void {
+	error_log('ci sdk: ' . $error->getMessage());
+});
+$outbox->createTable();
+```
+
+Call `createTable()` once, for example in an install step, or create the table with your own migration:
+
+```sql
+CREATE TABLE ci_outbox (
+	id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+	event_id VARCHAR(36) NOT NULL,
+	payload LONGTEXT NOT NULL,
+	created_at DATETIME NOT NULL,
+	PRIMARY KEY (id),
+	UNIQUE KEY uniq_ci_outbox_event_id (event_id)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE = InnoDB;
+```
+
+PostgreSQL uses `id BIGSERIAL PRIMARY KEY`, `payload TEXT` and `created_at TIMESTAMP`. Frameworks can pass their existing connection: `$entityManager->getConnection()->getNativeConnection()` in Doctrine, `DB::connection()->getPdo()` in Laravel. A duplicate event id is ignored, and a row whose payload is not valid JSON is reported and deleted.
+
+**Files (`FileOutbox`)**, one JSON file per event in a directory, for setups without a database:
+
+```php
+$outbox = new FileOutbox('/var/lib/myshop/ci-outbox');
+```
+
+Any other storage works by implementing the `Outbox` interface (`push`, `peek`, `remove`).
+
 ## Event::create arguments
 
 `Event::create($event, $properties, $anonymousId, $userId, $sessionId, $url, $userAgent)`
