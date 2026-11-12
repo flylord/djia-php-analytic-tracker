@@ -36,7 +36,7 @@ $client = new Client($config, $outbox, null, function (\Throwable $error): void 
 
 $client->track(Event::create(
 	'order_completed',
-	['order_id' => '1001', 'total' => 12500, 'currency' => 'EUR'],
+	['order_id' => '1001', 'items' => [['product_id' => '55', 'quantity' => 1, 'unit_price' => 12500]], 'revenue' => 12500, 'currency' => 'EUR'],
 	Visitor::anonymousId($_COOKIE),
 	'42'
 ));
@@ -47,9 +47,7 @@ if (function_exists('fastcgi_finish_request')) {
 $client->flush();
 ```
 
-## Events reference
-
-### Event::create arguments
+## Event::create arguments
 
 `Event::create($event, $properties, $anonymousId, $userId, $sessionId, $url, $userAgent)`
 
@@ -65,93 +63,184 @@ $client->flush();
 
 The SDK fills `event_id` (UUID v4) and `timestamp` (now, UTC). The collector keeps a server timestamp up to 30 days old. An older one, or one more than 5 minutes ahead, is replaced with the receive time. The SDK checks none of these rules: the collector rejects a bad event inside a 200 answer and the rejection reaches the `onError` hook.
 
-### Properties
+## Event properties
 
-The collector does not check property contents. The tables below are the convention the WooCommerce plugin and the browser tracker follow; nothing enforces them. Money is an integer in minor units, `round(price * 10 ** decimals)`, so 125.00 RSD is `12500`. `currency` is an ISO 4217 code such as `RSD`.
+Copy of the contract in `.project_docs/events.md`, which is canonical. The collector does not check property contents, so this is a contract, not validation.
+
+### Rules for every event
+
+- **Money** is an integer in minor units by the currency's ISO 4217 exponent, not by the shop's display decimals. RSD and EUR have exponent 2, so 125.00 RSD is `12500`, and a shop that displays RSD without decimals still sends `12500`. JPY has exponent 0.
+- **`currency`** is an ISO 4217 code, for example `RSD`.
+- **Totals** (`revenue`, `payment_confirmed.amount`, `total`) are the grand total the customer pays: products after discounts, plus shipping, including tax.
+- **`unit_price`** is the price the customer pays per unit: after discounts, including tax.
+- **Ids** (`order_id`, `product_id`, `variation_id`, `refund_id`, `category_id`, `recommendation_id`) are strings, even when the shop uses numbers.
+- **`variation_id`** is optional. Omit it when the product has no variation. Never send `0` or `null`.
+- **Extra properties** are allowed. The tables list the minimum set; a sender may add its own keys.
+- **Required** in the tables means a reader may rely on it. Optional keys are omitted when there is no value, not sent as `null`.
+
+### Item
+
+`order_completed.items`, `cart_viewed.items` and `checkout_started.items` use this shape:
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `product_id` | string | yes | Product id |
+| `variation_id` | string | no | Variation id, omitted when none |
+| `quantity` | int | yes | Units |
+| `unit_price` | int | yes | Price per unit, minor units, after discounts, including tax |
+
+### Server events
+
+Sent by the shop server through the PHP SDK, never by the browser.
 
 #### order_completed
 
-| Property | Type | Meaning |
-|---|---|---|
-| `order_id` | int | Shop order id |
-| `items` | list | One entry per order line |
-| `items[].product_id` | int | Product id |
-| `items[].variation_id` | int | Variation id. The plugin sends `0` for a product without variations |
-| `items[].quantity` | int | Units on the line |
-| `items[].unit_price` | int | Line total divided by `max(1, quantity)`: discounted, excluding tax |
-| `revenue` | int | Order total |
-| `currency` | string | ISO code |
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `order_id` | string | yes | Shop order id |
+| `order_number` | string | no | Order number shown to the customer, when it differs from `order_id` |
+| `items` | list of Item | yes | One entry per order line |
+| `revenue` | int | yes | Grand total: products, shipping and tax |
+| `shipping` | int | no | Shipping part of `revenue`, including tax |
+| `currency` | string | yes | ISO code |
 
-Send it once per order. The plugin guards this with order meta `_ci_order_completed_tracked`.
+Send it exactly once per order. The collector deduplicates only by `event_id`, and every `Event::create()` makes a new one, so a second send is stored as a second order. The sender keeps a "tracked" flag on the order and skips the event when it is set.
 
 #### payment_confirmed
 
-| Property | Type | Meaning |
-|---|---|---|
-| `order_id` | int | Shop order id |
-| `amount` | int | Amount paid, the plugin sends the order total |
-| `currency` | string | ISO code |
-| `method` | string | Payment method id (`$order->get_payment_method()`), for example `bacs` |
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `order_id` | string | yes | Shop order id |
+| `order_number` | string | no | Order number shown to the customer |
+| `amount` | int | yes | Amount paid: the grand total, as in `revenue` |
+| `currency` | string | yes | ISO code |
+| `method` | string | yes | Payment method id, for example `bacs` |
 
 #### order_cancelled
 
-| Property | Type | Meaning |
-|---|---|---|
-| `order_id` | int | Shop order id |
-| `reason` | string | Cancellation note from the status transition, empty string when none |
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `order_id` | string | yes | Shop order id |
+| `order_number` | string | no | Order number shown to the customer |
+| `status` | string | yes | Why the order was cancelled, one value from the list below |
+| `reason` | string | no | Free text cancellation note, omitted when none |
+
+`status` values. Every site maps its own statuses to exactly one of these; a value outside the list breaks reports.
+
+| Value | Use when |
+|---|---|
+| `customer_cancelled` | The customer cancelled or gave up on the order |
+| `payment_failed` | The payment was declined or failed |
+| `payment_timeout` | The order was not paid in time and was cancelled automatically |
+| `out_of_stock` | The shop cancelled because it could not supply the goods |
+| `merchant_cancelled` | The shop cancelled for any other reason, for example suspected fraud or an undeliverable address |
+| `other` | None of the above fits, or the cause is unknown |
 
 #### order_refunded
 
-| Property | Type | Meaning |
-|---|---|---|
-| `order_id` | int | Shop order id |
-| `refund_id` | int | Refund id |
-| `amount` | int | Refunded amount, positive |
-| `currency` | string | ISO code |
-| `items` | list | Refunded lines, empty for an amount only refund |
-| `items[].product_id` | int | Product id |
-| `items[].variation_id` | int | Variation id, `0` when none |
-| `items[].quantity` | int | Refunded units, positive |
-| `items[].amount` | int | Refunded amount for the line, positive |
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `order_id` | string | yes | Shop order id |
+| `order_number` | string | no | Order number shown to the customer |
+| `refund_id` | string | yes | Refund id |
+| `amount` | int | yes | Refunded amount, positive |
+| `currency` | string | yes | ISO code |
+| `items` | list | no | Refunded lines, omitted for an amount only refund |
+| `items[].product_id` | string | yes | Product id |
+| `items[].variation_id` | string | no | Variation id, omitted when none |
+| `items[].quantity` | int | yes | Refunded units, positive |
+| `items[].amount` | int | yes | Refunded amount for the line, positive, including tax |
+
+### Events sent by either side
 
 #### product_added_to_cart
 
-| Property | Type | Meaning |
-|---|---|---|
-| `product_id` | int | Product id |
-| `variation_id` | int | Variation id, `0` when none |
-| `quantity` | int | Units added |
-| `unit_price` | int | Price per unit |
-| `currency` | string | ISO code |
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `product_id` | string | yes | Product id |
+| `variation_id` | string | no | Variation id, omitted when none |
+| `quantity` | int | yes | Units added |
+| `unit_price` | int | yes | Price per unit, minor units, after discounts, including tax |
+| `currency` | string | yes | ISO code |
 
 #### product_removed_from_cart
 
-| Property | Type | Meaning |
-|---|---|---|
-| `product_id` | int | Product id |
-| `variation_id` | int | Variation id, `0` when none |
-| `quantity` | int | Units removed |
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `product_id` | string | yes | Product id |
+| `variation_id` | string | no | Variation id, omitted when none |
+| `quantity` | int | yes | Units removed |
 
 #### user_identified
 
-No properties. Pass the customer id as `$userId` and the visitor id as `$anonymousId`, which links the two. The plugin sends it on login and registration.
+No properties. It links `user_id` (the shop customer id) to `anonymous_id` (the `ci_aid` visitor id). In the browser, `djia_ci('identify', userId)` sends it once per visitor and user: calling it on every page sets `user_id` on each event but sends `user_identified` only when the user differs from the last one identified in this browser. On the server, pass both to `Event::create()`. One side is enough; the WooCommerce plugin sends it on login and registration.
 
-#### Browser events
+### Browser events
 
-These are normally sent by the browser tracker. A server may send them too. Their types are not fixed anywhere: the tracker README gives only the names, and its examples use a string `product_id` (`'12345'`) where the plugin sends an int.
+Sent by the browser tracker.
 
-| Event | Properties |
-|---|---|
-| `product_viewed` | `product_id`, `category` |
-| `category_viewed` | `category_id`, `page` |
-| `product_compared` | `product_ids` |
-| `search_performed` | `query`, `filters`, `result_count` |
-| `filter_changed` | `category_id`, `filters`, `result_count` |
-| `cart_viewed` | `items`, `total`, `currency` |
-| `checkout_started` | `items`, `total`, `currency` |
-| `recommendation_clicked` | `recommendation_id`, `product_id` |
-| `recommendation_purchased` | Not defined yet |
+#### product_viewed
 
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `product_id` | string | yes | Product id |
+| `category` | string | no | Category id or name of the product |
+
+#### category_viewed
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `category_id` | string | yes | Category id |
+| `page` | int | no | Listing page number, starting at 1 |
+
+#### product_compared
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `product_ids` | list of string | yes | Products in the comparison |
+
+#### search_performed
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `query` | string | yes | Search text |
+| `filters` | object | no | Active filters, filter name to value or list of values |
+| `result_count` | int | no | Number of results |
+
+#### filter_changed
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `category_id` | string | no | Category being filtered |
+| `filters` | object | yes | Filters after the change, filter name to value or list of values |
+| `result_count` | int | no | Number of results |
+
+#### cart_viewed
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `items` | list of Item | yes | Cart lines |
+| `total` | int | yes | Cart total as shown, including tax |
+| `currency` | string | yes | ISO code |
+
+#### checkout_started
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `items` | list of Item | yes | Cart lines |
+| `total` | int | yes | Cart total as shown, including tax |
+| `currency` | string | yes | ISO code |
+
+#### recommendation_clicked
+
+| Property | Type | Required | Meaning |
+|---|---|---|---|
+| `recommendation_id` | string | yes | Id of the recommendation shown |
+| `product_id` | string | yes | Product clicked |
+
+#### recommendation_purchased
+
+Not defined yet. The recommendation engine does not exist, so nothing sends it.
 ## Behaviour
 
 - `track()` only writes the event to the outbox. It never sends anything and never throws.
