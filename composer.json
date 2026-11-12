@@ -2,6 +2,7 @@
   "name": "djia/php-analytic-tracker",
   "description": "PHP integration library for sending signed server events to the Commerce Intelligence collector",
   "type": "library",
+  "license": "MIT",
   "require": {
     "php": ">=7.4",
     "ext-curl": "*",
