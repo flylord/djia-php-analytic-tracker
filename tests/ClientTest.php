@@ -24,7 +24,7 @@ final class FakeTransport implements Transport {
 
 	public function post(string $url, array $headers, string $body, float $timeoutSeconds, ?string &$responseBody = null): int {
 		$responseBody = $this->responseBody;
-		if ($this->throw !== null) {
+		if ($this->throw instanceof \Throwable) {
 			throw $this->throw;
 		}
 		$this->calls[] = ['url' => $url, 'headers' => $headers, 'body' => $body];
@@ -87,7 +87,7 @@ final class ClientTest extends TestCase {
 	public function testFlushKeepsEventsOnNetworkError(): void {
 		$errors = [];
 		$outbox = new FileOutbox($this->dir);
-		$client = new Client($this->config(), $outbox, new FakeTransport(0), function (\Throwable $e) use (&$errors) {
+		$client = new Client($this->config(), $outbox, new FakeTransport(0), function (\Throwable $e) use (&$errors): void {
 			$errors[] = $e->getMessage();
 		});
 		$client->track(Event::create('x'));
@@ -101,7 +101,7 @@ final class ClientTest extends TestCase {
 	public function testNon2xxIsReported(): void {
 		$errors = [];
 		$outbox = new FileOutbox($this->dir);
-		$client = new Client($this->config(), $outbox, new FakeTransport(503), function (\Throwable $e) use (&$errors) {
+		$client = new Client($this->config(), $outbox, new FakeTransport(503), function (\Throwable $e) use (&$errors): void {
 			$errors[] = $e;
 		});
 		$client->track(Event::create('x'));
@@ -117,7 +117,7 @@ final class ClientTest extends TestCase {
 		$transport = new FakeTransport(200);
 		$transport->responseBody = '{"accepted":1,"rejected":2}';
 		$outbox = new FileOutbox($this->dir);
-		$client = new Client($this->config(), $outbox, $transport, function (\Throwable $e) use (&$errors) {
+		$client = new Client($this->config(), $outbox, $transport, function (\Throwable $e) use (&$errors): void {
 			$errors[] = $e->getMessage();
 		});
 		$client->track(Event::create('x'));
@@ -131,7 +131,7 @@ final class ClientTest extends TestCase {
 		$errors = [];
 		$transport = new FakeTransport(200);
 		$transport->responseBody = '{"accepted":1,"rejected":0}';
-		$client = new Client($this->config(), new FileOutbox($this->dir), $transport, function (\Throwable $e) use (&$errors) {
+		$client = new Client($this->config(), new FileOutbox($this->dir), $transport, function (\Throwable $e) use (&$errors): void {
 			$errors[] = $e->getMessage();
 		});
 		$client->track(Event::create('x'));

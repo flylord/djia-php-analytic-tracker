@@ -42,9 +42,7 @@ final class FileOutbox implements Outbox {
 			$mtime = @filemtime($file);
 			$entries[] = [$mtime === false ? 0 : $mtime, basename($file), $file];
 		}
-		usort($entries, static function (array $a, array $b): int {
-			return [$a[0], $a[1]] <=> [$b[0], $b[1]];
-		});
+		usort($entries, static fn(array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
 
 		$result = [];
 		foreach ($entries as [, $name, $file]) {

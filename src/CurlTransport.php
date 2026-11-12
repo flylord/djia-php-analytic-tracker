@@ -33,7 +33,7 @@ final class CurlTransport implements Transport {
 			CURLOPT_NOSIGNAL => true,
 		]);
 		$result = curl_exec($ch);
-		$status = $result === false ? 0 : (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+		$status = $result === false ? 0 : curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 		curl_close($ch);
 		$responseBody = is_string($result) ? $result : null;
 
