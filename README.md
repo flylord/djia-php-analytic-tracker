@@ -4,20 +4,11 @@ Plain PHP library that sends signed server events (orders, payments, refunds) to
 
 ## Install
 
-The package is not on Packagist. Require it through a Composer path repository in the consuming project:
-
-```json
-{
-	"repositories": [
-		{ "type": "path", "url": "../path/to/app/php-sdk", "options": { "symlink": false } }
-	],
-	"require": {
-		"djia/php-analytic-tracker": "@dev"
-	}
-}
+```bash
+composer require djia/php-analytic-tracker
 ```
 
-After changing the SDK, run `composer update djia/php-analytic-tracker` in the consuming project so its `composer.lock` and `vendor/` pick up the new code.
+The package is on Packagist: https://packagist.org/packages/djia/php-analytic-tracker
 
 ## Usage
 
